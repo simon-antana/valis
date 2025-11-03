@@ -605,8 +605,12 @@ class DiskFD(KorniaFD):
         tensor_img = preprocessing.img_to_tensor(image)
         with torch.inference_mode():
             res = self.disk(tensor_img.to(self.device).float(), n=self.num_features, pad_if_not_divisible=True)[0]
-            kp_pos_xy = res.keypoints.detach().numpy()
-            desc = res.descriptors.detach().numpy()
+            if self.device == 'cpu':
+                kp_pos_xy = res.keypoints.detach().numpy()
+                desc = res.descriptors.detach().numpy()
+            else: 
+                kp_pos_xy = res.keypoints.detach().cpu().numpy()
+                desc = res.descriptors.detach().cpu().numpy()
 
         return kp_pos_xy, desc
 

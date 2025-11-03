@@ -1453,10 +1453,14 @@ class LightGlueMatcher(Matcher):
 
         with torch.inference_mode():
             lafs2 = kornia.feature.laf_from_center_scale_ori(t_kp2[None], torch.ones(1, len(t_kp2), 1, 1, device=self.device))
-
-            match_distances, idxs = self.lg_matcher(t_desc1, t_desc2, lafs1, lafs2, hw1=hw1, hw2=r_hw2)
-            match_distances = match_distances.detach().numpy()
-            idxs = idxs.detach().numpy()
+            if self.device == 'cpu':
+                match_distances, idxs = self.lg_matcher(t_desc1, t_desc2, lafs1, lafs2, hw1=hw1, hw2=r_hw2)
+                match_distances = match_distances.detach().numpy()
+                idxs = idxs.detach().numpy()
+            else:
+                match_distances, idxs = self.lg_matcher(t_desc1, t_desc2, lafs1, lafs2, hw1=hw1, hw2=r_hw2)
+                match_distances = match_distances.detach().cpu().numpy()
+                idxs = idxs.detach().cpu().numpy()
 
         desc1_match_idx = idxs[:, 0]
         matched_desc1 = desc1[desc1_match_idx, :]
