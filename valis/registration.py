@@ -125,6 +125,7 @@ TRANSFORM_MSG = "Finding rigid transforms"
 PREP_NON_RIGID_MSG = "Preparing images for non-rigid registration"
 MEASURE_MSG = "Measuring error"
 SAVING_IMG_MSG = "Saving images"
+WARPING_TO_ARRAYS_MSG = "Warping slides to arrays"
 
 PROCESS_IMG_MSG, NORM_IMG_MSG, DENOISE_MSG = valtils.pad_strings([PROCESS_IMG_MSG, NORM_IMG_MSG, DENOISE_MSG])
 
@@ -1105,6 +1106,61 @@ class Slide(object):
         slide_io.save_ome_tiff(warped_slide, dst_f=dst_f, ome_xml=ome_xml,
                                tile_wh=tile_wh, compression=compression,
                                Q=Q, pyramid=pyramid)
+
+    def warp_slide_to_array(self, level=0, non_rigid=True,
+                            crop=True, src_f=None, interp_method="bicubic", reader=None):
+        """Warp a slide and return as a numpy array
+
+        Similar to `warp_and_save_slide`, but returns the warped image
+        as a numpy array instead of saving it to disk.
+
+        Parameters
+        ----------
+        level : int
+            Pyramid level to be warped
+
+        non_rigid : bool, optional
+            Whether or not to conduct non-rigid warping. If False,
+            then only a rigid transformation will be applied. Default is True
+
+        crop: bool, str
+            How to crop the registered images. If `True`, then the same crop used
+            when initializing the `Valis` object will be used. If `False`, the
+            image will not be cropped. If "overlap", the warped slide will be
+            cropped to include only areas where all images overlapped.
+            "reference" crops to the area that overlaps with the reference image,
+            defined by `reference_img_f` when initializing the `Valis object`.
+
+        src_f : str, optional
+           Path of slide to be warped. If None (the default), Slide.src_f
+           will be used. Otherwise, the file to which `src_f` points to should
+           be an alternative copy of the slide, such as one that has undergone
+           processing (e.g. stain segmentation), has a mask applied, etc...
+
+        interp_method : str
+            Interpolation method used when warping slide. Default is "bicubic"
+
+        reader: SlideReader, optional
+            Instantiated SlideReader to use to read image. If `None`,
+            the default reader will be used.
+
+        Returns
+        -------
+        warped_array : ndarray
+            Warped image as a numpy array
+
+        """
+        # Warp the slide (returns pyvips.Image)
+        warped_slide = self.warp_slide(level=level,
+                                       non_rigid=non_rigid,
+                                       crop=crop,
+                                       interp_method=interp_method,
+                                       src_f=src_f,
+                                       reader=reader)
+
+        # Convert pyvips.Image to numpy array
+        warped_array = warp_tools.vips2numpy(warped_slide)
+        return warped_array
 
 
     def warp_xy(self, xy, M=None, slide_level=0, pt_level=0,
@@ -5201,7 +5257,60 @@ class Valis(object):
                                           Q=Q,
                                           pyramid=pyramid)
 
+    def warp_slides_to_arrays(self, level=0, non_rigid=True,
+                               crop=True, interp_method="bicubic"):
+        """Warp all slides and return as numpy arrays
 
+        Similar to `warp_and_save_slides`, but returns the warped images
+        as a list of numpy arrays instead of saving them to disk.
+
+        Parameters
+        ----------
+        level : int, optional
+            Pyramid level to be warped. Default is 0, which means the highest
+            resolution image will be warped.
+
+        non_rigid : bool, optional
+            Whether or not to conduct non-rigid warping. If False,
+            then only a rigid transformation will be applied. Default is True
+
+        crop: bool, str
+            How to crop the registered images. If `True`, then the same crop used
+            when initializing the `Valis` object will be used. If `False`, the
+            image will not be cropped. If "overlap", the warped slide will be
+            cropped to include only areas where all images overlapped.
+            "reference" crops to the area that overlaps with the reference image,
+            defined by `reference_img_f` when initialzing the `Valis object`.
+
+        interp_method : str
+            Interpolation method used when warping slide. Default is "bicubic"
+
+        Returns
+        -------
+        warped_arrays : list of ndarray
+            List of warped images as numpy arrays. Each array corresponds to
+            a slide in the order returned by `get_sorted_img_f_list()`.
+
+        """
+        src_f_list = self.get_sorted_img_f_list()
+        warped_arrays = []
+
+        for src_f in tqdm.tqdm(src_f_list, desc=WARPING_TO_ARRAYS_MSG, unit="image"):
+            slide_obj = self.get_slide(src_f)
+
+            # Warp the slide (returns pyvips.Image)
+            warped_slide = slide_obj.warp_slide(level=level,
+                                                non_rigid=non_rigid,
+                                                crop=crop,
+                                                interp_method=interp_method)
+
+            # Convert pyvips.Image to numpy array
+            warped_array = warp_tools.vips2numpy(warped_slide)
+            warped_arrays.append(warped_array)
+
+        return warped_arrays
+
+    
     @valtils.deprecated_args(perceputally_uniform_channel_colors="colormap")
     def warp_and_merge_slides(self, dst_f=None, level=0, non_rigid=True,
                               crop=True, channel_name_dict=None,

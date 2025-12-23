@@ -3393,7 +3393,8 @@ def update_xml_for_new_img(img, reader, level=0, channel_names=None, colormap=CM
 
     og_valid_xml = True
     og_ome = None
-    if current_ome_xml_str is not None:
+    if current_ome_xml_str is not None and current_ome_xml_str.strip():
+    
         try:
             elementTree.fromstring(current_ome_xml_str)
             og_ome = get_ome_obj(current_ome_xml_str)
