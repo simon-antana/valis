@@ -561,7 +561,8 @@ class Slide(object):
         else:
             sxy = np.ones(2)
 
-        to_slide_transformer = transform.SimilarityTransform(scale=sxy)
+        #to_slide_transformer = transform.SimilarityTransform(scale=sxy)
+        to_slide_transformer = transform.SimilarityTransform(scale=float(np.mean(sxy)))
         overlap_bbox = warp_tools.bbox2xy(mask_bbox_xywh)
         scaled_overlap_bbox = to_slide_transformer(overlap_bbox)
         scaled_overlap_xywh = warp_tools.xy2bbox(scaled_overlap_bbox)
