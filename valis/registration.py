@@ -5259,10 +5259,12 @@ class Valis(object):
 
     def warp_slides_to_arrays(self, level=0, non_rigid=True,
                                crop=True, interp_method="bicubic"):
-        """Warp all slides and return as numpy arrays
+        """Warp all slides and yield as numpy arrays one at a time
 
-        Similar to `warp_and_save_slides`, but returns the warped images
-        as a list of numpy arrays instead of saving them to disk.
+        Similar to `warp_and_save_slides`, but yields the warped images
+        as numpy arrays one at a time instead of saving them to disk.
+        This generator function saves memory by processing and yielding
+        each slide individually rather than accumulating all arrays in memory.
 
         Parameters
         ----------
@@ -5285,17 +5287,20 @@ class Valis(object):
         interp_method : str
             Interpolation method used when warping slide. Default is "bicubic"
 
-        Returns
-        -------
-        warped_arrays : list of ndarray
-            List of warped images as numpy arrays. Each array corresponds to
+        Yields
+        ------
+        warped_array : ndarray
+            Warped image as a numpy array. Each yielded array corresponds to
             a slide in the order returned by `get_sorted_img_f_list()`.
 
+        Examples
+        --------
+        >>> for warped_array in registrar.warp_slides_to_arrays():
+        ...     # Process each array individually
+        ...     process_image(warped_array)
+
         """
-        import gc
-        
         src_f_list = self.get_sorted_img_f_list()
-        warped_arrays = []
 
         for src_f in tqdm.tqdm(src_f_list, desc=WARPING_TO_ARRAYS_MSG, unit="image"):
             slide_obj = self.get_slide(src_f)
@@ -5312,15 +5317,9 @@ class Valis(object):
             # Delete the pyvips.Image to free memory immediately
             del warped_slide
             
-            # Append the numpy array to the list
-            warped_arrays.append(warped_array)
-            
-            # Force garbage collection periodically to help free memory
-            # Only do this every few iterations to avoid performance hit
-            if len(warped_arrays) % 5 == 0:
-                gc.collect()
-
-        return warped_arrays
+            # Yield the array immediately, allowing caller to process it
+            # before the next slide is warped
+            yield warped_array
 
     
     @valtils.deprecated_args(perceputally_uniform_channel_colors="colormap")
