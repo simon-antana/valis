@@ -3191,8 +3191,9 @@ class Valis(object):
             kp2_xy_in_uncropped_warped = warp_tools.warp_xy(kp2_xy_in_uncropped_scaled, M=prev_M)
 
             # Estimate transform
-            M_tform = rigid_registrar.transformer
-            M_tform.estimate(kp2_xy_in_uncropped_warped, kp1_xy_in_uncropped_scaled)
+            M_tform = rigid_registrar.transformer.__class__.from_estimate(
+                kp2_xy_in_uncropped_warped, kp1_xy_in_uncropped_scaled
+            )
 
             if any_reflections:
                 scaled_M = uncropped_reflect_M @ M_tform.params
@@ -3396,8 +3397,7 @@ class Valis(object):
                                     transformation_dst_shape_rc=og_dst_shape_rc,
                                     src_shape_rc=matching_rigid_obj.image.shape,
                                     dst_shape_rc=out_rc)
-            M_tform = transform.ProjectiveTransform()
-            M_tform.estimate(warped_corners, img_corners_xy)
+            M_tform = transform.ProjectiveTransform.from_estimate(warped_corners, img_corners_xy)
             for_reg_M = M_tform.params
             scaled_M_dict[matching_rigid_obj.name] = for_reg_M
             matching_rigid_obj.M = for_reg_M
@@ -3421,7 +3421,7 @@ class Valis(object):
             src_xy = to_prev_match_info.matched_kp1_xy
             dst_xy = warp_tools.warp_xy(to_prev_match_info.matched_kp2_xy, prev_M)
 
-            transformer.estimate(dst_xy, src_xy)
+            transformer = transformer.__class__.from_estimate(dst_xy, src_xy)
             img_obj.M = transformer.params
 
             prev_M = img_obj.M
@@ -3581,8 +3581,7 @@ class Valis(object):
 
             src_xy = slide_obj.xy_matched_to_prev
             dst_xy = warp_tools.warp_xy(slide_obj.xy_in_prev, prev_M)
-            transformer = getattr(transform, self.transform_str)()
-            transformer.estimate(dst_xy, src_xy)
+            transformer = getattr(transform, self.transform_str).from_estimate(dst_xy, src_xy)
             slide_obj.M = transformer.params
 
             prev_M = transformer.params
@@ -4320,8 +4319,9 @@ class Valis(object):
                                                             src_shape_rc=slide_obj.uncropped_processed_img_shape_rc,
                                                             dst_shape_rc = rescaled_dxdy_shape_rc
                                                             )
-                dispalcement_transformer = transform.ProjectiveTransform()
-                dispalcement_transformer.estimate(warped_uncropped_corners, uncropped_corners_xy)
+                dispalcement_transformer = transform.ProjectiveTransform.from_estimate(
+                    warped_uncropped_corners, uncropped_corners_xy
+                )
                 displacement_M = dispalcement_transformer.params
 
                 bk_dxdy_in_original = warp_tools.warp_img(np.dstack(nr_obj.bk_dxdy),
@@ -5292,6 +5292,8 @@ class Valis(object):
             a slide in the order returned by `get_sorted_img_f_list()`.
 
         """
+        import gc
+        
         src_f_list = self.get_sorted_img_f_list()
         warped_arrays = []
 
@@ -5306,7 +5308,17 @@ class Valis(object):
 
             # Convert pyvips.Image to numpy array
             warped_array = warp_tools.vips2numpy(warped_slide)
+            
+            # Delete the pyvips.Image to free memory immediately
+            del warped_slide
+            
+            # Append the numpy array to the list
             warped_arrays.append(warped_array)
+            
+            # Force garbage collection periodically to help free memory
+            # Only do this every few iterations to avoid performance hit
+            if len(warped_arrays) % 5 == 0:
+                gc.collect()
 
         return warped_arrays
 

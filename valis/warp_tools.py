@@ -1153,8 +1153,7 @@ def warp_img(img, M=None, bk_dxdy=None, out_shape_rc=None,
                                      transformation_dst_shape_rc=transformation_dst_shape_rc,
                                      src_shape_rc=src_shape_rc,
                                      dst_shape_rc=out_shape_rc)
-            M_tform = transform.ProjectiveTransform()
-            M_tform.estimate(warped_corners, img_corners_xy)
+            M_tform = transform.ProjectiveTransform.from_estimate(warped_corners, img_corners_xy)
             warp_M = M_tform.params
 
         else:
@@ -1359,8 +1358,7 @@ def warp_img_inv(img, M=None, fwd_dxdy=None, transformation_src_shape_rc=None, t
                                     transformation_dst_shape_rc=transformation_dst_shape_rc,
                                     src_shape_rc=src_shape_rc,
                                     dst_shape_rc=warped_src_shape_rc)
-        M_tform = transform.ProjectiveTransform()
-        M_tform.estimate(img_corners_xy, warped_corners)
+        M_tform = transform.ProjectiveTransform.from_estimate(img_corners_xy, warped_corners)
         warp_M = M_tform.params
 
         tx, ty = warp_M[:2, 2]

@@ -1296,7 +1296,7 @@ class SerialRigidRegistrar(object):
             src_xy = warp_tools.warp_xy(to_prev_match_info.matched_kp1_xy, img_obj.T)
             dst_xy = warp_tools.warp_xy(to_prev_match_info.matched_kp2_xy, prev_M)
 
-            transformer.estimate(dst_xy, src_xy)
+            transformer = transformer.__class__.from_estimate(dst_xy, src_xy)
 
             # Check quality. If poor, then set M to identity
             M = transformer.params
