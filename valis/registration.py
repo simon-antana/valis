@@ -5258,17 +5258,13 @@ class Valis(object):
                                           pyramid=pyramid)
 
     def warp_slides_to_arrays(self, level=0, non_rigid=True,
-                               crop=True, interp_method="bicubic",
-                               mask_save_dir=None):
+                               crop=True, interp_method="bicubic"):
         """Warp all slides and yield as numpy arrays one at a time
 
         Similar to `warp_and_save_slides`, but yields the warped images
         as numpy arrays one at a time instead of saving them to disk.
         This generator function saves memory by processing and yielding
         each slide individually rather than accumulating all arrays in memory.
-        
-        After warping, each slide is cropped to the tissue region defined
-        by the non-rigid registration mask.
 
         Parameters
         ----------
@@ -5287,21 +5283,15 @@ class Valis(object):
             cropped to include only areas where all images overlapped.
             "reference" crops to the area that overlaps with the reference image,
             defined by `reference_img_f` when initialzing the `Valis object`.
-            Note: After warping, the slide is further cropped to the tissue region.
 
         interp_method : str
             Interpolation method used when warping slide. Default is "bicubic"
 
-        mask_save_dir : str, optional
-            Directory where masks will be saved. If None, masks will be saved
-            to `{self.dst_dir}/warped_masks`. Default is None.
-
         Yields
         ------
         warped_array : ndarray
-            Warped image as a numpy array, cropped to the tissue region.
-            Each yielded array corresponds to a slide in the order returned
-            by `get_sorted_img_f_list()`.
+            Warped image as a numpy array. Each yielded array corresponds
+            to a slide in the order returned by `get_sorted_img_f_list()`.
 
         Examples
         --------
@@ -5311,115 +5301,23 @@ class Valis(object):
 
         """
         src_f_list = self.get_sorted_img_f_list()
-        
-        # Get the non-rigid registration mask - this is the same for all slides
-        # and represents the tissue region in aligned space
-        valtils.print_warning("Getting non-rigid registration mask (same for all aligned slides)", warning_type=None)
-        
-        # Get the mask from the first slide (it's the same for all slides)
-        first_slide = self.get_slide(src_f_list[0]) if src_f_list else None
-        tissue_mask_aligned_space = None
-        
-        if first_slide is not None and first_slide.non_rigid_reg_mask is not None:
-            tissue_mask_aligned_space = first_slide.non_rigid_reg_mask
-            valtils.print_warning(f"Non-rigid registration mask shape in aligned space: {tissue_mask_aligned_space.shape}", warning_type=None)
-            
-            # Create directory for saving masks if it doesn't exist
-            if mask_save_dir is None:
-                mask_save_dir = os.path.join(self.dst_dir, "warped_masks")
-            pathlib.Path(mask_save_dir).mkdir(exist_ok=True, parents=True)
-            
-            # Save the combined mask
-            combined_mask_path = os.path.join(mask_save_dir, "non_rigid_reg_mask.png")
-            warp_tools.save_img(combined_mask_path, tissue_mask_aligned_space)
-            valtils.print_warning(f"Saved non-rigid registration mask to: {combined_mask_path}", warning_type=None)
-        else:
-            valtils.print_warning("No non_rigid_reg_mask available. Masks may not have been created during registration.", warning_type=None)
 
         for src_f in tqdm.tqdm(src_f_list, desc=WARPING_TO_ARRAYS_MSG, unit="image"):
             slide_obj = self.get_slide(src_f)
-            valtils.print_warning(f"Processing slide: {slide_obj.name}", warning_type=None)
 
-            # Warp the slide first (with crop=False to get full aligned image)
-            # We'll crop to tissue region afterwards
+            # Warp the slide
             warped_slide = slide_obj.warp_slide(level=level,
                                                 non_rigid=non_rigid,
-                                                crop=False,  # Get full warped image first
+                                                crop=crop,
                                                 interp_method=interp_method)
 
             # Convert pyvips.Image to numpy array
             warped_array = warp_tools.vips2numpy(warped_slide)
-            valtils.print_warning(f"Warped array shape for {slide_obj.name}: {warped_array.shape}", warning_type=None)
             
             # Delete the pyvips.Image to free memory immediately
             del warped_slide
             
-            # Crop to tissue region using the non-rigid registration mask
-            # The mask is in aligned_img_shape_rc space, need to scale to warped slide space
-            if tissue_mask_aligned_space is not None:
-                warped_shape_rc = warped_array.shape[:2]
-                
-                # Get the aligned image shape for scaling
-                aligned_img_shape_rc = self.aligned_img_shape_rc
-                
-                # Scale the mask from aligned space to warped slide space
-                if aligned_img_shape_rc != warped_shape_rc:
-                    valtils.print_warning(f"Scaling tissue mask from {aligned_img_shape_rc} to {warped_shape_rc} for {slide_obj.name}", warning_type=None)
-                    scaled_tissue_mask = warp_tools.resize_img(
-                        tissue_mask_aligned_space,
-                        warped_shape_rc,
-                        interp_method="nearest"  # Use nearest neighbor for masks
-                    )
-                else:
-                    scaled_tissue_mask = tissue_mask_aligned_space.copy()
-                
-                # Convert mask to numpy if it's still a pyvips Image
-                if isinstance(scaled_tissue_mask, pyvips.Image):
-                    scaled_tissue_mask = warp_tools.vips2numpy(scaled_tissue_mask)
-                
-                # Get bounding box of tissue region from scaled mask
-                mask_bbox_xy = warp_tools.mask2xy(scaled_tissue_mask)
-                tissue_bbox_xywh = warp_tools.xy2bbox(mask_bbox_xy)
-                
-                mask_coverage = np.sum(scaled_tissue_mask > 0) / scaled_tissue_mask.size * 100
-                valtils.print_warning(f"Tissue bounding box for {slide_obj.name} (x, y, w, h): {tissue_bbox_xywh}, mask coverage: {mask_coverage:.2f}%", warning_type=None)
-                
-                # Ensure bbox is within array bounds
-                x, y, w, h = tissue_bbox_xywh.astype(int)
-                x = max(0, min(x, warped_array.shape[1] - 1))
-                y = max(0, min(y, warped_array.shape[0] - 1))
-                w = min(w, warped_array.shape[1] - x)
-                h = min(h, warped_array.shape[0] - y)
-                
-                valtils.print_warning(f"Adjusted bbox for {slide_obj.name} (x, y, w, h): ({x}, {y}, {w}, {h})", warning_type=None)
-                
-                # Save the scaled mask for this slide
-                mask_save_path = os.path.join(mask_save_dir, f"{slide_obj.name}_tissue_mask_scaled.png")
-                warp_tools.save_img(mask_save_path, scaled_tissue_mask)
-                valtils.print_warning(f"Saved scaled tissue mask to: {mask_save_path}", warning_type=None)
-                
-                # Also save the cropped mask region
-                if w > 0 and h > 0:
-                    cropped_mask = scaled_tissue_mask[y:y+h, x:x+w]
-                    cropped_mask_path = os.path.join(mask_save_dir, f"{slide_obj.name}_tissue_mask_cropped.png")
-                    warp_tools.save_img(cropped_mask_path, cropped_mask)
-                    valtils.print_warning(f"Saved cropped mask to: {cropped_mask_path}", warning_type=None)
-                
-                # Crop the warped array to tissue region
-                if w > 0 and h > 0:
-                    original_shape = warped_array.shape
-                    if warped_array.ndim == 2:
-                        warped_array = warped_array[y:y+h, x:x+w]
-                    else:
-                        # Handle multi-channel images
-                        warped_array = warped_array[y:y+h, x:x+w, ...]
-                    valtils.print_warning(f"Cropped array for {slide_obj.name} from {original_shape} to {warped_array.shape}", warning_type=None)
-                else:
-                    valtils.print_warning(f"Invalid bounding box for {slide_obj.name}, skipping crop")
-            else:
-                valtils.print_warning(f"No non-rigid registration mask available, returning full warped image for {slide_obj.name}")
-            
-            # Yield the cropped array immediately, allowing caller to process it
+            # Yield the array immediately, allowing caller to process it
             # before the next slide is warped
             yield warped_array
 
