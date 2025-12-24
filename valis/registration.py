@@ -2858,10 +2858,10 @@ class Valis(object):
             n_in_processed_dir = len(os.listdir(self.processed_dir))
             if n_in_processed_dir != self.size:
                 msg = (f"It appears the destination directory, {self.dst_dir}, is being reused, but that the number of images (n={self.size})"
-                f" in this run differs than previous runs (n={n_in_processed_dir})."
-                f" This may result in confusing naming of thumbnail files, but the actual registration should be unaffected."
-                f" To avoid this, please either delete {self.dst_dir}, or change the"
-                f" `name` parameter when initializing the Valis object to something besides `None` or '{self.name}'")
+                   f" in this run differs than previous runs (n={n_in_processed_dir})."
+                   f" This may result in confusing naming of thumbnail files, but the actual registration should be unaffected."
+                   f" To avoid this, please either delete {self.dst_dir}, or change the"
+                   f" `name` parameter when initializing the Valis object to something besides `None` or '{self.name}'")
                 valtils.print_warning(msg)
 
         pathlib.Path(self.processed_dir).mkdir(exist_ok=True, parents=True)
@@ -2882,64 +2882,6 @@ class Valis(object):
                     img_to_process = warp_tools.rescale_img(slide_obj.image, processing_s)
                 else:
                     img_to_process = slide_obj.image
-
-                # If create_masks is True, crop to tissue mask + 20% padding before processing
-                if self.create_masks:
-                    # Create a temporary processor to get the mask
-                    processing_level = slide_tools.get_level_idx(slide_obj.slide_dimensions_wh, self.max_processed_image_dim_px) - 1
-                    processing_level = max(0, processing_level)
-                    temp_processor = processing_cls(image=img_to_process,
-                                                    src_f=slide_obj.src_f,
-                                                    level=processing_level,
-                                                    series=slide_obj.series,
-                                                    reader=slide_obj.reader)
-                    
-                    # Get the tissue mask
-                    temp_mask = temp_processor.create_mask()
-                    
-                    # Ensure mask matches image size
-                    mask_shape_rc = warp_tools.get_shape(temp_mask)[0:2]
-                    if np.any(mask_shape_rc != img_to_process.shape[0:2]):
-                        temp_mask = warp_tools.resize_img(temp_mask, img_to_process.shape[0:2], interp_method="nearest")
-                    
-                    # Get bounding box of tissue
-                    mask_xy = warp_tools.mask2xy(temp_mask)
-                    if len(mask_xy) > 0:
-                        mask_bbox_xywh = warp_tools.xy2bbox(mask_xy)
-                        x, y, w, h = mask_bbox_xywh.astype(int)
-                        
-                        # Add 20% padding
-                        padding = 0.2
-                        pad_w = int(w * padding)
-                        pad_h = int(h * padding)
-                        
-                        # Expand bbox with padding, ensuring it stays within image bounds
-                        x = max(0, x - pad_w)
-                        y = max(0, y - pad_h)
-                        w = min(img_to_process.shape[1] - x, w + 2 * pad_w)
-                        h = min(img_to_process.shape[0] - y, h + 2 * pad_h)
-                        
-                        # Crop the image to the expanded bounding box
-                        if img_to_process.ndim == 2:
-                            img_to_process = img_to_process[y:y+h, x:x+w]
-                        else:
-                            img_to_process = img_to_process[y:y+h, x:x+w, ...]
-                        
-                        # Store crop info for later use
-                        crop_bbox = np.array([x, y, w, h])
-                        uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
-                        uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
-                        slide_obj.rigid_cropped = True  # Mark as cropped
-                    else:
-                        # No tissue found, use full image
-                        crop_bbox = np.array([0, 0, *img_to_process.shape[1::-1]])
-                        uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
-                        uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
-                else:
-                    # No cropping when create_masks is False
-                    uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
-                    uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
-                    crop_bbox = np.array([0, 0, *warp_tools.get_shape(img_to_process)[1::-1]])
 
             processing_level = slide_tools.get_level_idx(slide_obj.slide_dimensions_wh, self.max_processed_image_dim_px) - 1
             processing_level = max(0, processing_level)
@@ -2964,14 +2906,9 @@ class Valis(object):
                 processed_shape_rc = warp_tools.get_shape(processed_img)[0:2]
 
             if not self.crop_for_rigid_reg:
-                # Update uncropped shapes if we cropped based on mask
-                if self.create_masks and slide_obj.rigid_cropped:
-                    # Shapes already set above
-                    pass
-                else:
-                    uncropped_shape_rc = processed_shape_rc
-                    uncropped_unscaled_processed_shape_rc = processed_shape_rc
-                    crop_bbox = np.array([0, 0, *processed_shape_rc[::-1]])
+                uncropped_shape_rc = processed_shape_rc
+                uncropped_unscaled_processed_shape_rc = processed_shape_rc
+                crop_bbox = np.array([0, 0, *processed_shape_rc[::-1]])
 
                 if self.create_masks:
                     mask = processor.create_mask()
@@ -5321,7 +5258,7 @@ class Valis(object):
                                           pyramid=pyramid)
 
     def warp_slides_to_arrays(self, level=0, non_rigid=True,
-                               crop=True, interp_method="bicubic"):
+                               crop=True, interp_method="bicubic", padding=0):
         """Warp all slides and yield as numpy arrays one at a time
 
         Similar to `warp_and_save_slides`, but yields the warped images
@@ -5353,8 +5290,8 @@ class Valis(object):
         Yields
         ------
         warped_array : ndarray
-            Warped image as a numpy array. Each yielded array corresponds
-            to a slide in the order returned by `get_sorted_img_f_list()`.
+            Warped image as a numpy array. Each yielded array corresponds to
+            a slide in the order returned by `get_sorted_img_f_list()`.
 
         Examples
         --------
@@ -5364,8 +5301,9 @@ class Valis(object):
 
         """
         src_f_list = self.get_sorted_img_f_list()
+        tissue_bbox_xywh = None  # Will be set from first image
 
-        for src_f in tqdm.tqdm(src_f_list, desc=WARPING_TO_ARRAYS_MSG, unit="image"):
+        for idx, src_f in enumerate(tqdm.tqdm(src_f_list, desc="Warping slides to arrays", unit="image")):
             slide_obj = self.get_slide(src_f)
 
             # Warp the slide
@@ -5380,7 +5318,102 @@ class Valis(object):
             # Delete the pyvips.Image to free memory immediately
             del warped_slide
             
-            # Yield the array immediately, allowing caller to process it
+            # For the first image, detect tissue and create bounding box
+            if idx == 0 and tissue_bbox_xywh is None:
+                valtils.print_warning(f"Detecting tissue in first warped image ({slide_obj.name}) to create crop bounding box", warning_type=None)
+                
+                # Determine if image is RGB (brightfield) or multichannel (fluorescence)
+                is_rgb = slide_obj.is_rgb
+                
+                # Downsample image for memory-efficient tissue mask creation
+                # Use max dimension of 2000 pixels for tissue detection
+                original_shape_rc = warped_array.shape[:2]
+                max_dim_for_mask = 2000
+                max_original_dim = max(original_shape_rc)
+                
+                if max_original_dim > max_dim_for_mask:
+                    scale_factor = max_dim_for_mask / max_original_dim
+                    downsampled_shape_rc = (int(original_shape_rc[0] * scale_factor), 
+                                           int(original_shape_rc[1] * scale_factor))
+                    valtils.print_warning(f"  Downsampling from {original_shape_rc} to {downsampled_shape_rc} for tissue detection", warning_type=None)
+                    downsampled_array = warp_tools.resize_img(warped_array, downsampled_shape_rc, interp_method="bicubic")
+                else:
+                    downsampled_array = warped_array
+                    scale_factor = 1.0
+                
+                # Create tissue mask using preprocessing function on downsampled image
+                valtils.print_warning(f"  Creating tissue mask (is_rgb={is_rgb})...", warning_type=None)
+                tissue_mask, _ = preprocessing.create_tissue_mask(downsampled_array, is_rgb=is_rgb)
+                
+                # Get bounding box of tissue from downsampled mask
+                mask_xy = warp_tools.mask2xy(tissue_mask)
+                mask_coverage = np.sum(tissue_mask > 0) / tissue_mask.size * 100
+                valtils.print_warning(f"  Found {len(mask_xy)} tissue pixels, coverage: {mask_coverage:.2f}%", warning_type=None)
+                
+                if len(mask_xy) == 0:
+                    valtils.print_warning(f"  WARNING: No tissue pixels found in first image! Returning full image without cropping.", warning_type=None)
+                    yield warped_array
+                    continue
+                
+                mask_bbox_xywh = warp_tools.xy2bbox(mask_xy)
+                x, y, w, h = mask_bbox_xywh.astype(int)
+                valtils.print_warning(f"  Tissue bbox on downsampled image (before padding): x={x}, y={y}, w={w}, h={h}", warning_type=None)
+                
+                # Add padding
+                pad_w = int(w * padding)
+                pad_h = int(h * padding)
+                valtils.print_warning(f"  Adding {padding*100}% padding: pad_w={pad_w}, pad_h={pad_h}", warning_type=None)
+                
+                # Expand bbox with padding, ensuring it stays within downsampled image bounds
+                x = max(0, x - pad_w)
+                y = max(0, y - pad_h)
+                w = min(downsampled_array.shape[1] - x, w + 2 * pad_w)
+                h = min(downsampled_array.shape[0] - y, h + 2 * pad_h)
+                
+                # Scale bounding box back up to original image size
+                x_scaled = int(x / scale_factor)
+                y_scaled = int(y / scale_factor)
+                w_scaled = int(w / scale_factor)
+                h_scaled = int(h / scale_factor)
+                
+                valtils.print_warning(f"  Scaled bbox to original size: x={x_scaled}, y={y_scaled}, w={w_scaled}, h={h_scaled}", warning_type=None)
+                
+                # Ensure scaled bbox stays within original image bounds
+                x_scaled = max(0, min(x_scaled, warped_array.shape[1] - 1))
+                y_scaled = max(0, min(y_scaled, warped_array.shape[0] - 1))
+                w_scaled = min(w_scaled, warped_array.shape[1] - x_scaled)
+                h_scaled = min(h_scaled, warped_array.shape[0] - y_scaled)
+                
+                tissue_bbox_xywh = np.array([x_scaled, y_scaled, w_scaled, h_scaled], dtype=int)
+                valtils.print_warning(f"  Tissue bbox (after padding and scaling): x={x_scaled}, y={y_scaled}, w={w_scaled}, h={h_scaled}", warning_type=None)
+                valtils.print_warning(f"  Using this bounding box for all subsequent aligned images", warning_type=None)
+                
+                # Clean up downsampled array and mask to free memory
+                if scale_factor < 1.0:
+                    del downsampled_array
+                del tissue_mask
+            
+            # Crop all images (including first) to the tissue bounding box
+            if tissue_bbox_xywh is not None:
+                x, y, w, h = tissue_bbox_xywh
+                
+                # Ensure bbox is within array bounds (in case array sizes differ slightly)
+                x = max(0, min(x, warped_array.shape[1] - 1))
+                y = max(0, min(y, warped_array.shape[0] - 1))
+                w = min(w, warped_array.shape[1] - x)
+                h = min(h, warped_array.shape[0] - y)
+                
+                if w > 0 and h > 0:
+                    original_shape = warped_array.shape
+                    if warped_array.ndim == 2:
+                        warped_array = warped_array[y:y+h, x:x+w]
+                    else:
+                        warped_array = warped_array[y:y+h, x:x+w, ...]
+                    valtils.print_warning(f"Cropped {slide_obj.name} from {original_shape} to {warped_array.shape}", warning_type=None)
+                else:
+                    valtils.print_warning(f"Invalid bounding box for {slide_obj.name}, returning full image", warning_type=None)
+            
+            # Yield the cropped array immediately, allowing caller to process it
             # before the next slide is warped
             yield warped_array
 
