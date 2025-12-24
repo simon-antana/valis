@@ -5265,6 +5265,9 @@ class Valis(object):
         as numpy arrays one at a time instead of saving them to disk.
         This generator function saves memory by processing and yielding
         each slide individually rather than accumulating all arrays in memory.
+        
+        After warping, each slide is cropped to the tissue region defined
+        by the non-rigid registration mask.
 
         Parameters
         ----------
@@ -5283,6 +5286,7 @@ class Valis(object):
             cropped to include only areas where all images overlapped.
             "reference" crops to the area that overlaps with the reference image,
             defined by `reference_img_f` when initialzing the `Valis object`.
+            Note: After warping, the slide is further cropped to the tissue region.
 
         interp_method : str
             Interpolation method used when warping slide. Default is "bicubic"
@@ -5290,8 +5294,9 @@ class Valis(object):
         Yields
         ------
         warped_array : ndarray
-            Warped image as a numpy array. Each yielded array corresponds to
-            a slide in the order returned by `get_sorted_img_f_list()`.
+            Warped image as a numpy array, cropped to the tissue region.
+            Each yielded array corresponds to a slide in the order returned
+            by `get_sorted_img_f_list()`.
 
         Examples
         --------
@@ -5305,10 +5310,11 @@ class Valis(object):
         for src_f in tqdm.tqdm(src_f_list, desc=WARPING_TO_ARRAYS_MSG, unit="image"):
             slide_obj = self.get_slide(src_f)
 
-            # Warp the slide (returns pyvips.Image)
+            # Warp the slide first (with crop=False to get full aligned image)
+            # We'll crop to tissue region afterwards
             warped_slide = slide_obj.warp_slide(level=level,
                                                 non_rigid=non_rigid,
-                                                crop=crop,
+                                                crop=False,  # Get full warped image first
                                                 interp_method=interp_method)
 
             # Convert pyvips.Image to numpy array
@@ -5317,7 +5323,46 @@ class Valis(object):
             # Delete the pyvips.Image to free memory immediately
             del warped_slide
             
-            # Yield the array immediately, allowing caller to process it
+            # Crop to tissue region using non-rigid registration mask
+            if slide_obj.non_rigid_reg_mask is not None:
+                # Get the shape of the warped array
+                warped_shape_rc = warped_array.shape[:2]
+                
+                # Scale the non-rigid mask to match the warped array dimensions
+                # The mask is in reg_img_shape_rc space, need to scale to warped slide space
+                mask_scale_rc = np.array(warped_shape_rc) / np.array(slide_obj.reg_img_shape_rc)
+                
+                # Resize mask to match warped array dimensions
+                scaled_mask = warp_tools.resize_img(
+                    slide_obj.non_rigid_reg_mask,
+                    warped_shape_rc,
+                    interp_method="nearest"  # Use nearest neighbor for masks
+                )
+                
+                # Convert mask to numpy if it's still a pyvips Image
+                if isinstance(scaled_mask, pyvips.Image):
+                    scaled_mask = warp_tools.vips2numpy(scaled_mask)
+                
+                # Get bounding box of tissue region from mask
+                mask_bbox_xy = warp_tools.mask2xy(scaled_mask)
+                tissue_bbox_xywh = warp_tools.xy2bbox(mask_bbox_xy)
+                
+                # Ensure bbox is within array bounds
+                x, y, w, h = tissue_bbox_xywh.astype(int)
+                x = max(0, min(x, warped_array.shape[1] - 1))
+                y = max(0, min(y, warped_array.shape[0] - 1))
+                w = min(w, warped_array.shape[1] - x)
+                h = min(h, warped_array.shape[0] - y)
+                
+                # Crop the warped array to tissue region
+                if w > 0 and h > 0:
+                    if warped_array.ndim == 2:
+                        warped_array = warped_array[y:y+h, x:x+w]
+                    else:
+                        # Handle multi-channel images
+                        warped_array = warped_array[y:y+h, x:x+w, ...]
+            
+            # Yield the cropped array immediately, allowing caller to process it
             # before the next slide is warped
             yield warped_array
 
