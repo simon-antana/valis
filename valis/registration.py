@@ -2858,10 +2858,10 @@ class Valis(object):
             n_in_processed_dir = len(os.listdir(self.processed_dir))
             if n_in_processed_dir != self.size:
                 msg = (f"It appears the destination directory, {self.dst_dir}, is being reused, but that the number of images (n={self.size})"
-                   f" in this run differs than previous runs (n={n_in_processed_dir})."
-                   f" This may result in confusing naming of thumbnail files, but the actual registration should be unaffected."
-                   f" To avoid this, please either delete {self.dst_dir}, or change the"
-                   f" `name` parameter when initializing the Valis object to something besides `None` or '{self.name}'")
+                f" in this run differs than previous runs (n={n_in_processed_dir})."
+                f" This may result in confusing naming of thumbnail files, but the actual registration should be unaffected."
+                f" To avoid this, please either delete {self.dst_dir}, or change the"
+                f" `name` parameter when initializing the Valis object to something besides `None` or '{self.name}'")
                 valtils.print_warning(msg)
 
         pathlib.Path(self.processed_dir).mkdir(exist_ok=True, parents=True)
@@ -2882,6 +2882,64 @@ class Valis(object):
                     img_to_process = warp_tools.rescale_img(slide_obj.image, processing_s)
                 else:
                     img_to_process = slide_obj.image
+
+                # If create_masks is True, crop to tissue mask + 20% padding before processing
+                if self.create_masks:
+                    # Create a temporary processor to get the mask
+                    processing_level = slide_tools.get_level_idx(slide_obj.slide_dimensions_wh, self.max_processed_image_dim_px) - 1
+                    processing_level = max(0, processing_level)
+                    temp_processor = processing_cls(image=img_to_process,
+                                                    src_f=slide_obj.src_f,
+                                                    level=processing_level,
+                                                    series=slide_obj.series,
+                                                    reader=slide_obj.reader)
+                    
+                    # Get the tissue mask
+                    temp_mask = temp_processor.create_mask()
+                    
+                    # Ensure mask matches image size
+                    mask_shape_rc = warp_tools.get_shape(temp_mask)[0:2]
+                    if np.any(mask_shape_rc != img_to_process.shape[0:2]):
+                        temp_mask = warp_tools.resize_img(temp_mask, img_to_process.shape[0:2], interp_method="nearest")
+                    
+                    # Get bounding box of tissue
+                    mask_xy = warp_tools.mask2xy(temp_mask)
+                    if len(mask_xy) > 0:
+                        mask_bbox_xywh = warp_tools.xy2bbox(mask_xy)
+                        x, y, w, h = mask_bbox_xywh.astype(int)
+                        
+                        # Add 20% padding
+                        padding = 0.2
+                        pad_w = int(w * padding)
+                        pad_h = int(h * padding)
+                        
+                        # Expand bbox with padding, ensuring it stays within image bounds
+                        x = max(0, x - pad_w)
+                        y = max(0, y - pad_h)
+                        w = min(img_to_process.shape[1] - x, w + 2 * pad_w)
+                        h = min(img_to_process.shape[0] - y, h + 2 * pad_h)
+                        
+                        # Crop the image to the expanded bounding box
+                        if img_to_process.ndim == 2:
+                            img_to_process = img_to_process[y:y+h, x:x+w]
+                        else:
+                            img_to_process = img_to_process[y:y+h, x:x+w, ...]
+                        
+                        # Store crop info for later use
+                        crop_bbox = np.array([x, y, w, h])
+                        uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
+                        uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
+                        slide_obj.rigid_cropped = True  # Mark as cropped
+                    else:
+                        # No tissue found, use full image
+                        crop_bbox = np.array([0, 0, *img_to_process.shape[1::-1]])
+                        uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
+                        uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
+                else:
+                    # No cropping when create_masks is False
+                    uncropped_shape_rc = warp_tools.get_shape(slide_obj.image)[0:2]
+                    uncropped_unscaled_processed_shape_rc = warp_tools.get_shape(img_to_process)[0:2]
+                    crop_bbox = np.array([0, 0, *warp_tools.get_shape(img_to_process)[1::-1]])
 
             processing_level = slide_tools.get_level_idx(slide_obj.slide_dimensions_wh, self.max_processed_image_dim_px) - 1
             processing_level = max(0, processing_level)
@@ -2906,9 +2964,14 @@ class Valis(object):
                 processed_shape_rc = warp_tools.get_shape(processed_img)[0:2]
 
             if not self.crop_for_rigid_reg:
-                uncropped_shape_rc = processed_shape_rc
-                uncropped_unscaled_processed_shape_rc = processed_shape_rc
-                crop_bbox = np.array([0, 0, *processed_shape_rc[::-1]])
+                # Update uncropped shapes if we cropped based on mask
+                if self.create_masks and slide_obj.rigid_cropped:
+                    # Shapes already set above
+                    pass
+                else:
+                    uncropped_shape_rc = processed_shape_rc
+                    uncropped_unscaled_processed_shape_rc = processed_shape_rc
+                    crop_bbox = np.array([0, 0, *processed_shape_rc[::-1]])
 
                 if self.create_masks:
                     mask = processor.create_mask()
