@@ -1846,7 +1846,8 @@ class Valis(object):
                  norm_method=DEFAULT_NORM_METHOD,
                  micro_rigid_registrar_cls=None,
                  micro_rigid_registrar_params={},
-                 qt_emitter=None):
+                 qt_emitter=None,
+                 stain_mapping=None):
 
         """
         src_dir: str
@@ -2063,6 +2064,12 @@ class Valis(object):
         qt_emitter : PySide2.QtCore.Signal, optional
             Used to emit signals that update the GUI's progress bars
 
+        stain_mapping : dict, optional
+            Dictionary mapping filenames to stain names. Keys should be filenames
+            (can be full paths or just filenames) and values should be stain names.
+            This mapping will be used when returning warped arrays to include
+            stain information. If None, no stain information will be returned.
+
         """
 
         # Get name, based on src directory
@@ -2128,6 +2135,7 @@ class Valis(object):
         self.slide_dims_dict_wh = slide_dims_dict_wh
         self.resolution_xyu = resolution_xyu
         self.image_type = image_type
+        self.stain_mapping = stain_mapping if stain_mapping is not None else {}
 
         # Results fields #
         self.series = series
@@ -5289,9 +5297,13 @@ class Valis(object):
 
         Yields
         ------
-        warped_array : ndarray
-            Warped image as a numpy array. Each yielded array corresponds to
-            a slide in the order returned by `get_sorted_img_f_list()`.
+        warped_array : ndarray or tuple
+            If `stain_mapping` was provided during initialization, yields a tuple
+            of (warped_array, stain) where `warped_array` is the warped image
+            as a numpy array and `stain` is the stain name from the mapping
+            (or None if not found). If `stain_mapping` was not provided, yields
+            just the `warped_array`. Each yielded value corresponds to a slide
+            in the order returned by `get_sorted_img_f_list()`.
 
         Examples
         --------
@@ -5299,9 +5311,34 @@ class Valis(object):
         ...     # Process each array individually
         ...     process_image(warped_array)
 
+        >>> # With stain mapping
+        >>> stain_map = {"image1.tiff": "H&E", "image2.tiff": "IHC"}
+        >>> registrar = Valis(src_dir, dst_dir, stain_mapping=stain_map)
+        >>> for warped_array, stain in registrar.warp_slides_to_arrays():
+        ...     # Process each array with stain information
+        ...     process_image(warped_array, stain=stain)
+
         """
         src_f_list = self.get_sorted_img_f_list()
         tissue_bbox_xywh = None  # Will be set from first image
+
+        # Helper function to get stain for a filename
+        def get_stain_for_file(filename):
+            """Get stain name for a given filename, trying both full path and basename"""
+            if not self.stain_mapping:
+                return None
+            # Try exact match first (full path)
+            if filename in self.stain_mapping:
+                return self.stain_mapping[filename]
+            # Try basename match
+            basename = os.path.basename(filename)
+            if basename in self.stain_mapping:
+                return self.stain_mapping[basename]
+            # Try normalized path (handle different path separators)
+            normalized_filename = os.path.normpath(filename)
+            if normalized_filename in self.stain_mapping:
+                return self.stain_mapping[normalized_filename]
+            return None
 
         for idx, src_f in enumerate(tqdm.tqdm(src_f_list, desc="Warping slides to arrays", unit="image")):
             slide_obj = self.get_slide(src_f)
@@ -5352,7 +5389,11 @@ class Valis(object):
                 
                 if len(mask_xy) == 0:
                     valtils.print_warning(f"  WARNING: No tissue pixels found in first image! Returning full image without cropping.", warning_type=None)
-                    yield warped_array
+                    stain = get_stain_for_file(src_f)
+                    if self.stain_mapping:
+                        yield (warped_array, stain)
+                    else:
+                        yield warped_array
                     continue
                 
                 mask_bbox_xywh = warp_tools.xy2bbox(mask_xy)
@@ -5415,7 +5456,11 @@ class Valis(object):
             
             # Yield the cropped array immediately, allowing caller to process it
             # before the next slide is warped
-            yield warped_array
+            stain = get_stain_for_file(src_f)
+            if self.stain_mapping:
+                yield (warped_array, stain)
+            else:
+                yield warped_array
 
     
     @valtils.deprecated_args(perceputally_uniform_channel_colors="colormap")
